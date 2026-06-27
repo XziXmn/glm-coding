@@ -3,7 +3,9 @@ import type {
   AccountImportPayload,
   AccountPreferencesPayload,
   ApiResponse,
+  GlobalSettings,
   HealthPayload,
+  LogStreamOption,
   NetworkEgressMode,
   NetworkModePayload,
   RuntimeLogsPayload,
@@ -43,7 +45,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   health: () => request<HealthPayload>("/healthz"),
-  todayLogs: () => request<RuntimeLogsPayload>("/api/logs/today"),
+  todayLogs: (accountId?: string, stream?: string) =>
+    request<RuntimeLogsPayload>(
+      `/api/logs/today?${new URLSearchParams({
+        ...(accountId ? { account_id: accountId } : {}),
+        ...(stream ? { stream } : {}),
+      }).toString()}`,
+    ),
+  logStreams: () => request<{ streams: LogStreamOption[] }>("/api/logs/streams"),
+  getSettings: () => request<GlobalSettings>("/api/settings"),
+  updateSettings: (payload: Partial<GlobalSettings>) =>
+    request<GlobalSettings>("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   getNetworkMode: () => request<NetworkModePayload>("/api/network-mode"),
   updateNetworkMode: (mode: NetworkEgressMode) =>
     request<NetworkModePayload>("/api/network-mode", {
@@ -72,15 +87,6 @@ export const api = {
         body: JSON.stringify(payload),
       },
     ),
-  bootstrapAccount: (accountId: string, refreshFingerprint = true) =>
-    request<AccountDetailResponse>(
-      `/api/accounts/${encodeURIComponent(accountId)}/bootstrap?refresh_fingerprint=${String(refreshFingerprint)}`,
-      { method: "POST" },
-    ),
-  runAccount: (accountId: string) =>
-    request<unknown>(`/api/accounts/${encodeURIComponent(accountId)}/run`, {
-      method: "POST",
-    }),
   probeAccount: (accountId: string) =>
     request<unknown>(`/api/accounts/${encodeURIComponent(accountId)}/probe`, {
       method: "POST",
@@ -99,10 +105,6 @@ export const api = {
         method: "POST",
       },
     ),
-  pauseAccount: (accountId: string) =>
-    request<unknown>(`/api/accounts/${encodeURIComponent(accountId)}/pause`, {
-      method: "POST",
-    }),
   getTicketPool: (accountId: string) =>
     request<{ pool: TicketPoolEntry[]; collected: number; target: number }>(
       `/api/accounts/${encodeURIComponent(accountId)}/tickets`,

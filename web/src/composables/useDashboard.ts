@@ -5,6 +5,7 @@ import type {
   AccountDetailResponse,
   AccountImportPayload,
   AccountPreferencesPayload,
+  GlobalSettings,
   HealthPayload,
   NetworkEgressMode,
 } from "../types/api";
@@ -29,6 +30,8 @@ const POLL_INTERVAL_MS = 5000;
 export function useDashboard() {
   const details = ref<AccountDetailResponse[]>([]);
   const health = ref<HealthPayload | null>(null);
+  const settings = ref<GlobalSettings | null>(null);
+  const settingsLoading = ref(false);
   const loading = ref(false);
   const actionKey = ref("");
   const banner = ref<StatusBanner | null>(null);
@@ -46,9 +49,16 @@ export function useDashboard() {
   const runningTotal = computed(
     () =>
       details.value.filter(({ account }) =>
-        ["running", "pause_requested", "stock_monitoring"].includes(
+        ["running", "stock_monitoring"].includes(
           String(account.last_schedule_status || "").toLowerCase(),
         ),
+      ).length,
+  );
+  const pauseRequestedTotal = computed(
+    () =>
+      details.value.filter(({ account }) =>
+        String(account.last_schedule_status || "").toLowerCase() ===
+        "pause_requested",
       ).length,
   );
   const qrTotal = computed(
@@ -307,20 +317,77 @@ export function useDashboard() {
     return true;
   }
 
+  function checkStartupAccountHealth() {
+    if (details.value.length === 0) {
+      return;
+    }
+
+    const expired: string[] = [];
+    const unchecked: string[] = [];
+    const monitoring: string[] = [];
+
+    for (const detail of details.value) {
+      const status = String(
+        detail.account.account_status || "unchecked",
+      ).toLowerCase();
+      const label = detail.account.label || detail.account.id;
+      if (["expired", "error"].includes(status)) {
+        expired.push(label);
+      } else if (status === "unchecked") {
+        unchecked.push(label);
+      }
+      if (detail.account.stock_monitor_enabled) {
+        monitoring.push(label);
+      }
+    }
+
+    const monitoringText =
+      monitoring.length > 0
+        ? `${monitoring.length} 个账号已启动库存监控`
+        : "暂无账号启用库存监控";
+
+    if (expired.length > 0) {
+      const labels = expired.join("、");
+      setBanner(
+        `账号 ${labels} 已失效或遇到错误，请同步或检查 token。${monitoringText}。`,
+        "error",
+      );
+      return;
+    }
+
+    if (unchecked.length > 0) {
+      const labels = unchecked.join("、");
+      setBanner(
+        `账号 ${labels} 尚未完成自动测活，请等待或手动测活。${monitoringText}。`,
+        "warning",
+      );
+      return;
+    }
+
+    setBanner(
+      `全部 ${details.value.length} 个账号状态正常。${monitoringText}。`,
+      "success",
+    );
+  }
+
   async function refreshDashboard(silent = false) {
     if (!silent) {
       loading.value = true;
     }
     try {
-      const [healthPayload, accounts] = await Promise.all([
+      const [healthPayload, accounts, settingsPayload] = await Promise.all([
         api.health(),
         api.listAccounts(),
+        api.getSettings().catch(() => null),
       ]);
       const detailPayloads = await Promise.all(
         accounts.map((account) => api.getAccount(account.id)),
       );
       health.value = healthPayload;
       details.value = detailPayloads;
+      if (settingsPayload) {
+        settings.value = settingsPayload;
+      }
       const qrReminderShown = applyQrGeneratedReminder(detailPayloads);
       if (!silent && !qrReminderShown) {
         setBanner(copy.feedback.dashboardRefreshed, "success");
@@ -388,6 +455,12 @@ export function useDashboard() {
     );
   }
 
+  async function updateSettings(payload: Partial<GlobalSettings>) {
+    await runAction("settings", copy.feedback.settingsSaved, () =>
+      api.updateSettings(payload),
+    );
+  }
+
   async function updatePreferences(
     accountId: string,
     payload: AccountPreferencesPayload,
@@ -397,27 +470,9 @@ export function useDashboard() {
     );
   }
 
-  async function syncAccount(accountId: string) {
-    await runAction(`sync:${accountId}`, copy.feedback.accountSynced, () =>
-      api.bootstrapAccount(accountId, true),
-    );
-  }
-
   async function deleteAccount(accountId: string) {
     await runAction(`delete:${accountId}`, copy.feedback.accountDeleted, () =>
       api.deleteAccount(accountId),
-    );
-  }
-
-  async function runAccount(accountId: string) {
-    await runAction(`run:${accountId}`, copy.feedback.paymentStarted, () =>
-      api.runAccount(accountId),
-    );
-  }
-
-  async function probeAccount(accountId: string) {
-    await runAction(`probe:${accountId}`, copy.feedback.probeStarted, () =>
-      api.probeAccount(accountId),
     );
   }
 
@@ -430,20 +485,6 @@ export function useDashboard() {
   async function stopStockMonitor(accountId: string) {
     await runAction(`stock:${accountId}`, copy.feedback.stockMonitorStopped, () =>
       api.stopStockMonitor(accountId),
-    );
-  }
-
-  async function pauseAccount(accountId: string) {
-    await runAction(`pause:${accountId}`, copy.feedback.pauseRequested, () =>
-      api.pauseAccount(accountId),
-    );
-  }
-
-  async function clearTicketPool(accountId: string) {
-    await runAction(
-      `clearpool:${accountId}`,
-      copy.feedback.ticketPoolCleared,
-      () => api.clearTicketPool(accountId),
     );
   }
 
@@ -467,24 +508,24 @@ export function useDashboard() {
     actionKey,
     accountsTotal,
     banner,
+    checkStartupAccountHealth,
     clearBanner,
     deleteAccount,
     details,
     health,
     importAccount,
     loading,
-    clearTicketPool,
-    pauseAccount,
-    probeAccount,
+    pauseRequestedTotal,
     qrTotal,
     refreshDashboard,
     runningTotal,
-    runAccount,
+    settings,
+    settingsLoading,
     startPolling,
     startStockMonitor,
     stopStockMonitor,
-    syncAccount,
     updateNetworkMode,
     updatePreferences,
+    updateSettings,
   };
 }

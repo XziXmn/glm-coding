@@ -5,23 +5,25 @@ import AccountContextModal from "./components/AccountContextModal.vue";
 import AccountTable from "./components/AccountTable.vue";
 import AppShell from "./components/AppShell.vue";
 import DashboardStats from "./components/DashboardStats.vue";
+import GlobalSettingsModal from "./components/GlobalSettingsModal.vue";
 import ImportAccountModal from "./components/ImportAccountModal.vue";
+import LogViewer from "./components/LogViewer.vue";
 import StatusBanner from "./components/StatusBanner.vue";
 import { useDashboard } from "./composables/useDashboard";
-import { zhCN as copy } from "./locales/zhCN";
-import { api } from "./services/api";
 import type { AccountDetailResponse, AccountImportPayload } from "./types/api";
 
 const dashboard = useDashboard();
 const showImport = ref(false);
 const showContext = ref(false);
 const showLogs = ref(false);
-const logLoading = ref(false);
-const logText = ref("");
-const logMeta = ref("");
+const showSettings = ref(false);
 const selectedDetail = ref<AccountDetailResponse | null>(null);
 
 const importing = computed(() => dashboard.actionKey.value === "import");
+
+const accountOptions = computed(() =>
+  dashboard.details.value.map((detail) => detail.account),
+);
 
 const themeOverrides = {
     common: {
@@ -44,6 +46,7 @@ const themeOverrides = {
 
 onMounted(async () => {
     await dashboard.refreshDashboard();
+    dashboard.checkStartupAccountHealth();
     dashboard.startPolling();
 });
 
@@ -77,44 +80,8 @@ async function updateSchedule(
     });
 }
 
-async function updatePreviewConcurrency(accountId: string, value: number) {
-    await dashboard.updatePreferences(accountId, {
-        preview_concurrency: value,
-    });
-}
-
-async function updatePreviewConcurrencyTime(accountId: string, time: string) {
-    await dashboard.updatePreferences(accountId, {
-        preview_concurrency_time: time,
-    });
-}
-
-async function updatePreviewConcurrencyTimeEnabled(
-    accountId: string,
-    enabled: boolean,
-    time: string,
-) {
-    await dashboard.updatePreferences(accountId, {
-        preview_concurrency_time_enabled: enabled,
-        preview_concurrency_time: time,
-    });
-}
-
-async function openLogs() {
+function openLogs() {
     showLogs.value = true;
-    logLoading.value = true;
-    try {
-        const payload = await api.todayLogs();
-        logText.value = payload.text || "";
-        logMeta.value = payload.truncated
-            ? `${payload.date} / 最近 ${payload.lines.length} 行，共 ${payload.total || payload.lines.length} 行`
-            : `${payload.date} / 共 ${payload.lines.length} 行`;
-    } catch (error) {
-        logText.value = error instanceof Error ? error.message : "日志加载失败";
-        logMeta.value = "日志加载失败";
-    } finally {
-        logLoading.value = false;
-    }
 }
 </script>
 
@@ -129,6 +96,7 @@ async function openLogs() {
             @logs="openLogs"
             @refresh="dashboard.refreshDashboard()"
             @import="showImport = true"
+            @settings="showSettings = true"
             @update-network-mode="dashboard.updateNetworkMode"
         >
             <div class="banner-slot">
@@ -141,6 +109,7 @@ async function openLogs() {
                 <DashboardStats
                     :accounts-total="dashboard.accountsTotal.value"
                     :running-total="dashboard.runningTotal.value"
+                    :pause-requested-total="dashboard.pauseRequestedTotal.value"
                     :qr-total="dashboard.qrTotal.value"
                 />
                 <AccountTable
@@ -150,27 +119,9 @@ async function openLogs() {
                     @open-context="openContext"
                     @select-product="updateProduct"
                     @update-schedule="updateSchedule"
-                    @update-preview-concurrency="updatePreviewConcurrency"
-                    @update-preview-concurrency-time-enabled="
-                        updatePreviewConcurrencyTimeEnabled
-                    "
-                    @update-preview-concurrency-time="updatePreviewConcurrencyTime"
-                    @sync="dashboard.syncAccount"
                     @delete="dashboard.deleteAccount"
-                    @run="dashboard.runAccount"
-                    @probe="dashboard.probeAccount"
                     @start-stock-monitor="dashboard.startStockMonitor"
                     @stop-stock-monitor="dashboard.stopStockMonitor"
-                    @pause="dashboard.pauseAccount"
-                    @update-ticket-pool="
-                        (id, size, drainIntervalMs) =>
-                            dashboard.updatePreferences(id, {
-                                ticket_pool_size: size,
-                                ticket_pool_drain_interval_ms:
-                                    drainIntervalMs,
-                            })
-                    "
-                    @clear-ticket-pool="dashboard.clearTicketPool"
                 />
             </section>
         </AppShell>
@@ -184,31 +135,12 @@ async function openLogs() {
             v-model:show="showContext"
             :detail="selectedDetail"
         />
-        <n-drawer
-            v-model:show="showLogs"
-            display-directive="show"
-            placement="right"
-            width="min(960px, 92vw)"
-        >
-            <n-drawer-content :title="copy.app.logsTitle" closable>
-                <div class="logs-toolbar">
-                    <span>{{ logMeta || copy.app.logsToday }}</span>
-                    <n-button
-                        size="small"
-                        secondary
-                        :loading="logLoading"
-                        @click="openLogs"
-                        >{{ copy.app.refreshLogs }}</n-button
-                    >
-                </div>
-                <n-input
-                    class="runtime-log-viewer"
-                    type="textarea"
-                    readonly
-                    :autosize="false"
-                    :value="logText || copy.app.noLogs"
-                />
-            </n-drawer-content>
-        </n-drawer>
+        <LogViewer v-model:show="showLogs" :accounts="accountOptions" />
+        <GlobalSettingsModal
+            v-model:show="showSettings"
+            :settings="dashboard.settings.value"
+            :loading="dashboard.settingsLoading.value"
+            @submit="dashboard.updateSettings"
+        />
     </n-config-provider>
 </template>

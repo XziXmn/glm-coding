@@ -43,6 +43,7 @@ class Settings:
     tencent_ocr_timeout_seconds: int
     tencent_ocr_opencv_threads: int
     tencent_ocr_onnx_threads: int
+    tencent_ocr_ddddocr_fallback: bool
     runtime_log_level: str
     runtime_log_retention_days: int
     network_egress_mode: str
@@ -128,6 +129,7 @@ def get_settings() -> Settings:
                 field_name="TENCENT_OCR_ONNX_THREADS",
             ),
         ),
+        tencent_ocr_ddddocr_fallback=_parse_bool(os.getenv("TENCENT_OCR_DDDDOCR_FALLBACK", "1")),
         runtime_log_level=os.getenv("RUNTIME_LOG_LEVEL", "INFO").strip() or "INFO",
         runtime_log_retention_days=_parse_int(
             os.getenv("RUNTIME_LOG_RETENTION_DAYS", "7"),

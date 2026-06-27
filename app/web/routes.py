@@ -24,6 +24,8 @@ from app.models import (
     PreviewPaymentRequest,
     PreviewSeedRequest,
 )
+from app.runtime_logging import LOG_STREAM_ACCOUNT, LOG_STREAM_CAPTCHA, LOG_STREAM_GLOBAL, get_runtime_log_service
+from app.services.global_settings_service import get_global_settings_service
 from app.services.payment_service import get_payment_service
 from app.services.network_mode_service import get_network_mode_service
 
@@ -71,25 +73,55 @@ def update_network_mode(payload: NetworkModeRequest):
     return success(get_network_mode_service().set_mode(payload.mode))
 
 
+@router.get("/api/settings")
+def get_settings_payload():
+    return success(get_global_settings_service().get().to_dict())
+
+
+@router.patch("/api/settings")
+def update_settings_payload(payload: dict[str, Any]):
+    return success(get_global_settings_service().update(payload).to_dict())
+
+
 @router.get("/api/logs/today")
-def get_today_logs(limit: int = Query(default=500, ge=1, le=2000)):
+def get_today_logs(
+    account_id: str | None = Query(default=None),
+    stream: str = Query(default=LOG_STREAM_GLOBAL),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
     settings = get_settings()
     date_part = datetime.now().astimezone().strftime("%Y-%m-%d")
-    log_path = settings.runtime_logs_dir / f"events-{date_part}.jsonl"
-    if not log_path.exists():
-        return success({"date": date_part, "path": str(log_path), "lines": [], "text": "", "truncated": False})
-
-    raw_lines = log_path.read_text(encoding="utf-8").splitlines()
-    selected_lines = raw_lines[-limit:]
-    formatted_lines = [_format_runtime_log_line(line) for line in reversed(selected_lines)]
+    runtime_logs = get_runtime_log_service()
+    payload = runtime_logs.read_logs(
+        date=date_part,
+        stream=stream,
+        account_id=account_id,
+        limit=limit,
+    )
+    parsed = [runtime_logs.format_log_line(line) for line in reversed(payload["lines"])]
+    parsed = [item for item in parsed if item is not None]
     return success(
         {
             "date": date_part,
-            "path": str(log_path),
-            "lines": formatted_lines,
-            "text": "\n".join(formatted_lines),
-            "truncated": len(raw_lines) > len(selected_lines),
-            "total": len(raw_lines),
+            "path": payload["path"],
+            "stream": stream,
+            "account_id": account_id,
+            "entries": parsed,
+            "truncated": payload["truncated"],
+            "total": payload["total"],
+        }
+    )
+
+
+@router.get("/api/logs/streams")
+def list_log_streams():
+    return success(
+        {
+            "streams": [
+                {"value": LOG_STREAM_GLOBAL, "label": "全局日志"},
+                {"value": LOG_STREAM_ACCOUNT, "label": "账号日志"},
+                {"value": LOG_STREAM_CAPTCHA, "label": "验证码日志"},
+            ]
         }
     )
 
@@ -174,12 +206,6 @@ def create_qr(account_id: str, payload: CreateQrRequest):
     return success(payment_service.create_qr(account_id, payload))
 
 
-@router.post("/api/accounts/{account_id}/run")
-def run_payment_flow(account_id: str):
-    from app.services.scheduler_service import get_scheduler_service
-
-    return success(get_scheduler_service().start_account_flow(account_id, source="manual"))
-
 
 @router.post("/api/accounts/{account_id}/probe")
 def probe_account_flow(account_id: str):
@@ -251,21 +277,3 @@ def _decode_qr_base64(value: str) -> bytes:
     if "," in payload:
         payload = payload.split(",", 1)[1]
     return base64.b64decode(payload)
-
-
-def _format_runtime_log_line(raw_line: str) -> str:
-    try:
-        entry = json.loads(raw_line)
-    except json.JSONDecodeError:
-        return raw_line
-    timestamp = str(entry.get("timestamp") or "")
-    status = str(entry.get("status") or "")
-    account_id = str(entry.get("account_id") or "")
-    action = str(entry.get("action") or "")
-    stage = str(entry.get("stage") or "")
-    message = str(entry.get("message") or "")
-    details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
-    details_text = ""
-    if details:
-        details_text = " | " + json.dumps(details, ensure_ascii=False, separators=(",", ":"))
-    return f"{timestamp} | {status} | {account_id} | {action}/{stage} | {message}{details_text}"

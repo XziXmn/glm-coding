@@ -12,7 +12,7 @@ from datetime import datetime
 from functools import lru_cache
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from app.config import Settings, get_settings
 
@@ -33,6 +33,29 @@ SENSITIVE_KEYS = {
     "ticket",
     "token",
 }
+
+# Log streams: global events, per-account, and captcha-specific.
+LOG_STREAM_GLOBAL = "global"
+LOG_STREAM_ACCOUNT = "account"
+LOG_STREAM_CAPTCHA = "captcha"
+
+
+class LogEntry(TypedDict):
+    timestamp: str
+    date: str
+    pid: int
+    thread: str
+    account_id: str
+    run_id: str
+    action: str
+    source: str
+    stage: str
+    status: str
+    product_id: str
+    pay_type: str
+    message: str
+    details: dict[str, Any]
+    log_type: str
 
 
 @dataclass(frozen=True)
@@ -203,6 +226,54 @@ class RuntimeLogService:
             level=level,
         )
 
+    def log_captcha_event(
+        self,
+        *,
+        account_id: str,
+        action: str,
+        stage: str,
+        status: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+        source: str = "",
+        product_id: str = "",
+        pay_type: str = "",
+        level: int = logging.INFO,
+    ) -> None:
+        """Persist captcha-related events to a dedicated captcha log stream."""
+        run = FlowRun(
+            run_id=self._make_run_id(),
+            account_id=account_id,
+            action=action.strip() or "captcha",
+            source=source.strip(),
+            product_id=product_id.strip(),
+            pay_type=pay_type.strip(),
+        )
+        entry = self._base_entry(
+            stage=stage,
+            status=status,
+            message=message,
+            account_id=run.account_id,
+            run_id=run.run_id,
+            action=run.action,
+            source=run.source,
+            product_id=run.product_id,
+            pay_type=run.pay_type,
+            details=details,
+            log_type=LOG_STREAM_CAPTCHA,
+        )
+        self._write_entry(entry)
+        self._write_entry(entry, stream=LOG_STREAM_CAPTCHA)
+        self.logger.log(
+            level,
+            "[%s][%s][%s/%s][captcha] %s",
+            run.account_id,
+            run.run_id,
+            run.action,
+            stage,
+            message,
+        )
+
     def log_system_event(
         self,
         *,
@@ -227,6 +298,71 @@ class RuntimeLogService:
         self._write_entry(entry)
         self.logger.log(level, "[system][%s] %s", stage, message)
 
+    def read_logs(
+        self,
+        *,
+        date: str | None = None,
+        stream: str = LOG_STREAM_GLOBAL,
+        account_id: str | None = None,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        """Read a paginated slice of logs for a given stream and date."""
+        date_part = date or datetime.now().astimezone().strftime("%Y-%m-%d")
+        log_path = self._log_path(date_part, stream=stream, account_id=account_id)
+        if not log_path.exists():
+            return {
+                "date": date_part,
+                "path": str(log_path),
+                "lines": [],
+                "truncated": False,
+                "total": 0,
+            }
+
+        raw_lines = log_path.read_text(encoding="utf-8").splitlines()
+        selected_lines = raw_lines[-limit:]
+        return {
+            "date": date_part,
+            "path": str(log_path),
+            "lines": selected_lines,
+            "truncated": len(raw_lines) > len(selected_lines),
+            "total": len(raw_lines),
+        }
+
+    def _log_path(self, date_part: str, stream: str, account_id: str | None = None) -> Path:
+        if stream == LOG_STREAM_CAPTCHA:
+            return self.settings.runtime_logs_dir / f"events-captcha-{date_part}.jsonl"
+        if stream == LOG_STREAM_ACCOUNT and account_id:
+            return (
+                self.settings.runtime_logs_dir
+                / "accounts"
+                / account_id
+                / f"{date_part}.jsonl"
+            )
+        return self.settings.runtime_logs_dir / f"events-{date_part}.jsonl"
+
+    @staticmethod
+    def format_log_line(raw_line: str) -> dict[str, Any] | None:
+        """Parse a JSONL log line into a structured, display-ready entry."""
+        try:
+            entry = json.loads(raw_line)
+        except json.JSONDecodeError:
+            return None
+        details = entry.get("details") if isinstance(entry.get("details"), dict) else {}
+        details_text = ""
+        if details:
+            details_text = json.dumps(details, ensure_ascii=False, separators=(",", ":"))
+        return {
+            "timestamp": str(entry.get("timestamp") or ""),
+            "status": str(entry.get("status") or "").lower(),
+            "account_id": str(entry.get("account_id") or ""),
+            "action": str(entry.get("action") or ""),
+            "stage": str(entry.get("stage") or ""),
+            "message": str(entry.get("message") or ""),
+            "details": details,
+            "details_text": details_text,
+            "raw": raw_line,
+        }
+
     def _base_entry(
         self,
         *,
@@ -240,6 +376,7 @@ class RuntimeLogService:
         product_id: str,
         pay_type: str,
         details: dict[str, Any] | None,
+        log_type: str = LOG_STREAM_GLOBAL,
     ) -> dict[str, Any]:
         now = datetime.now().astimezone()
         return {
@@ -257,15 +394,32 @@ class RuntimeLogService:
             "pay_type": pay_type,
             "message": message,
             "details": self._sanitize_value(details or {}),
+            "log_type": log_type,
         }
 
-    def _write_entry(self, entry: dict[str, Any]) -> None:
+    def _write_entry(
+        self,
+        entry: dict[str, Any],
+        *,
+        stream: str = LOG_STREAM_GLOBAL,
+    ) -> None:
         date_part = str(entry.get("date") or datetime.now().strftime("%Y-%m-%d"))
         payload = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+        account_id = str(entry.get("account_id") or "").strip()
+
         with self._lock:
-            self._append_line(self.settings.runtime_logs_dir / f"events-{date_part}.jsonl", payload)
-            account_id = str(entry.get("account_id") or "").strip()
-            if account_id and account_id != "system":
+            if stream == LOG_STREAM_CAPTCHA:
+                path = self.settings.runtime_logs_dir / f"events-captcha-{date_part}.jsonl"
+            elif stream == LOG_STREAM_ACCOUNT and account_id and account_id != "system":
+                account_dir = self.settings.runtime_logs_dir / "accounts" / account_id
+                account_dir.mkdir(parents=True, exist_ok=True)
+                path = account_dir / f"{date_part}.jsonl"
+            else:
+                path = self.settings.runtime_logs_dir / f"events-{date_part}.jsonl"
+            self._append_line(path, payload)
+
+            # Always mirror non-captcha events to the per-account log for convenience.
+            if stream != LOG_STREAM_CAPTCHA and account_id and account_id != "system":
                 account_dir = self.settings.runtime_logs_dir / "accounts" / account_id
                 account_dir.mkdir(parents=True, exist_ok=True)
                 self._append_line(account_dir / f"{date_part}.jsonl", payload)

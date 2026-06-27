@@ -61,6 +61,7 @@ const emit = defineEmits<{
   logs: [];
   refresh: [];
   import: [];
+  settings: [];
   "update-network-mode": [mode: NetworkEgressMode];
 }>();
 </script>
@@ -114,6 +115,7 @@ const emit = defineEmits<{
             <div v-for="problem in healthProblems" :key="problem">{{ problem }}</div>
           </div>
         </n-tooltip>
+        <n-button secondary @click="emit('settings')">{{ copy.app.settings }}</n-button>
         <n-button secondary @click="emit('logs')">{{ copy.app.viewLogs }}</n-button>
         <n-button secondary @click="emit('refresh')">{{ copy.app.refresh }}</n-button>
         <n-button type="primary" @click="emit('import')">{{ copy.app.importAccount }}</n-button>

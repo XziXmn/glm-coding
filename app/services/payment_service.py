@@ -20,7 +20,7 @@ import qrcode
 from app.clients.bigmodel_client import BigModelClient, get_bigmodel_client
 from app.clients.tencent_captcha_client import TencentCaptchaClient, get_tencent_captcha_client
 from app.config import get_settings
-from app.errors import AegisFlowError, BadRequestError, UpstreamRequestError
+from app.errors import AegisFlowError, BadRequestError, TicketPoolExhaustedError, UpstreamRequestError
 from app.proxy_pool.service import get_builtin_proxy_pool_service, is_local_proxy_url
 from app.models import (
     AccountDetailResponse,
@@ -73,6 +73,9 @@ class PreviewRaceWinner:
 
 
 PREVIEW_RACE_MAX_ROUNDS = 999
+CREATE_QR_MAX_CYCLES = 5
+PREVIEW_PAYMENT_MAX_ROUNDS = 50
+SOLVE_CAPTCHA_MAX_ATTEMPTS = 20
 
 
 STATIC_PRODUCTS: tuple[StaticProduct, ...] = (
@@ -117,6 +120,9 @@ class PaymentService:
         self.tdc_service = tdc_service or get_tdc_service()
         self.runtime_logs = runtime_log_service or get_runtime_log_service()
         self.settings = get_settings()
+        self._payment_poll_lock = threading.Lock()
+        self._payment_poll_stops: dict[str, threading.Event] = {}
+        self._payment_poll_threads: dict[str, threading.Thread] = {}
 
     def health_payload(self) -> dict[str, Any]:
         ocr_status = self.ocr_service.status_payload()
@@ -586,6 +592,46 @@ class PaymentService:
         session = self.captcha_service.store_manual_ticket(session, request)
         return self.state_service.save_session(session)
 
+    def _log_captcha_ocr(
+        self,
+        account_id: str,
+        action: str,
+        status: str,
+        message: str,
+        challenge: Any,
+        ocr: dict[str, Any] | None,
+        extra: dict[str, Any] | None = None,
+        level: int = logging.INFO,
+    ) -> None:
+        instruction = ""
+        image_size: int | None = None
+        if isinstance(challenge, dict):
+            instruction = str(challenge.get("instruction") or "")
+            image_size = challenge.get("image_size")
+        else:
+            instruction = getattr(challenge, "instruction", "") or ""
+            image_size = getattr(challenge, "image_size", None)
+        details: dict[str, Any] = {
+            "instruction": instruction,
+            "image_size": image_size,
+            "ocr_points": len(ocr.get("points") or []) if isinstance(ocr, dict) and isinstance(ocr.get("points"), list) else 0,
+            "ocr_confidence": ocr.get("confidence") if isinstance(ocr, dict) else None,
+            "ocr_algorithm": ocr.get("algorithm") if isinstance(ocr, dict) else None,
+            "worker_pid": ocr.get("_worker_pid") if isinstance(ocr, dict) else None,
+            "worker_elapsed_ms": ocr.get("_worker_elapsed_ms") if isinstance(ocr, dict) else None,
+        }
+        if extra:
+            details.update(extra)
+        self.runtime_logs.log_captcha_event(
+            account_id=account_id,
+            action=action,
+            stage="captcha_ocr",
+            status=status,
+            message=message,
+            details=details,
+            level=level,
+        )
+
     def fetch_captcha_challenge(
         self,
         account_id: str,
@@ -626,6 +672,14 @@ class PaymentService:
             )
             self.state_service.save_session(session)
             ocr = payload.get("ocr") if isinstance(payload.get("ocr"), dict) else {}
+            self._log_captcha_ocr(
+                account_id,
+                "fetch_captcha_challenge",
+                "success",
+                "验证码图片获取成功",
+                challenge,
+                ocr,
+            )
             self.runtime_logs.log_event(
                 flow,
                 stage="captcha_challenge",
@@ -693,6 +747,15 @@ class PaymentService:
             ocr=payload.get("ocr") if isinstance(payload.get("ocr"), dict) else None,
         )
         ocr = payload.get("ocr") if isinstance(payload.get("ocr"), dict) else {}
+        self._log_captcha_ocr(
+            account.id,
+            "fetch_captcha_challenge_for_session",
+            "success",
+            "验证码图片获取成功",
+            challenge,
+            ocr,
+            extra=details,
+        )
         self.runtime_logs.log_event(
             flow,
             stage="captcha_challenge",
@@ -762,10 +825,13 @@ class PaymentService:
         flow: FlowRun | None = None,
         persist_session: bool = False,
         finish_own_flow: bool = False,
+        refreshcnt: int = 0,
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            request, tdc_result = self._hydrate_tdc_if_needed(account, session, request)
+            request, tdc_result = self._hydrate_tdc_if_needed(
+                account, session, request, refreshcnt=refreshcnt
+            )
             bundle = self.captcha_service.build_verify_payload(session, request)
             bundle["challenge"] = {
                 "sess": session.captcha_challenge_sess,
@@ -801,6 +867,20 @@ class PaymentService:
                 "error_message": verify_result.error_message,
             }
             verify_ok = bool(verify_result.ticket and verify_result.randstr and str(verify_result.error_code or "0") in {"", "0"})
+            self.runtime_logs.log_captcha_event(
+                account_id=account_id,
+                action="captcha_verify",
+                stage="captcha_verify",
+                status="success" if verify_ok else "failed",
+                message="验证码 verify 完成" if verify_ok else "验证码 verify 未通过",
+                details={
+                    "ret": verify_result.ret,
+                    "error_code": verify_result.error_code,
+                    "error_message": verify_result.error_message,
+                    **self._captcha_ticket_log_details(verify_result.ticket, verify_result.randstr),
+                },
+                level=logging.INFO if verify_ok else logging.WARNING,
+            )
             self.runtime_logs.log_event(
                 flow,
                 stage="captcha_verify",
@@ -873,6 +953,11 @@ class PaymentService:
                 if stop_event is not None and stop_event.is_set():
                     raise RunPausedError("preview race 已有其他任务胜出")
                 attempt += 1
+                if attempt > SOLVE_CAPTCHA_MAX_ATTEMPTS:
+                    raise UpstreamRequestError(
+                        f"验证码识别超过最大尝试次数 {SOLVE_CAPTCHA_MAX_ATTEMPTS}",
+                        details={"attempts": attempt - 1, "max_attempts": SOLVE_CAPTCHA_MAX_ATTEMPTS},
+                    )
                 if push_progress:
                     self._push_runtime_message(
                         account_id,
@@ -970,6 +1055,7 @@ class PaymentService:
                         CaptchaVerifyPayloadRequest(),
                         flow=flow,
                         persist_session=persist_session,
+                        refreshcnt=attempt,
                         details={"attempt": attempt, **(details or {})},
                     )
                 except AegisFlowError as exc:
@@ -1285,7 +1371,7 @@ class PaymentService:
         unused = [e for e in pool if not e.used]
 
         if not unused:
-            raise UpstreamRequestError(
+            raise TicketPoolExhaustedError(
                 "ticket 池为空，没有可用的 ticket",
                 details={"account_id": account_id, "pool_total": len(pool)},
             )
@@ -1379,7 +1465,7 @@ class PaymentService:
             if idx < len(unused):
                 self._sleep_ticket_pool_interval(account_id, drain_interval_ms)
 
-        raise UpstreamRequestError(
+        raise TicketPoolExhaustedError(
             "ticket 池已耗尽，所有 ticket 均未能拿到 bizId",
             details={"account_id": account_id, "tickets_tried": len(unused), "mode": "serial"},
         )
@@ -1420,11 +1506,6 @@ class PaymentService:
         lane_specs: list[tuple[int, Any, float]] = []
         for idx, entry in enumerate(unused, start=1):
             lane_specs.append((idx, entry, 0.0))
-
-        for _, entry, _ in lane_specs:
-            entry.used = True
-        session.ticket_pool = pool
-        self.state_service.save_session(session)
 
         stop_event = threading.Event()
         executor = concurrent.futures.ThreadPoolExecutor(
@@ -1486,7 +1567,7 @@ class PaymentService:
             if not stop_event.is_set():
                 executor.shutdown(wait=True, cancel_futures=False)
 
-        raise UpstreamRequestError(
+        raise TicketPoolExhaustedError(
             "ticket 池已耗尽，所有 ticket 均未能拿到 bizId",
             details={"account_id": account_id, "tickets_tried": len(unused), "mode": "parallel"},
         )
@@ -1581,10 +1662,28 @@ class PaymentService:
             extra={"dispatch_delay_ms": round(delay_ms, 3)},
         )
 
-        if code == 200 and biz_id:
-            stop_event.set()
-            return self._preview_from_upstream_payload(raw)
-        return None
+        try:
+            if code == 200 and biz_id:
+                stop_event.set()
+                return self._preview_from_upstream_payload(raw)
+            return None
+        finally:
+            self._mark_pool_ticket_used(account_id, ticket)
+
+    def _mark_pool_ticket_used(
+        self,
+        account_id: str,
+        ticket: str,
+    ) -> None:
+        try:
+            session = self.state_service.load_session(account_id)
+            for entry in session.ticket_pool:
+                if entry.ticket == ticket and not entry.used:
+                    entry.used = True
+                    break
+            self.state_service.save_session(session)
+        except Exception:
+            logger.exception("标记 ticket 已用失败: %s", account_id)
 
     def _log_ticket_pool_preview_response(
         self,
@@ -1648,6 +1747,11 @@ class PaymentService:
             while True:
                 self._ensure_not_paused(account_id)
                 preview_round += 1
+                if preview_round > PREVIEW_PAYMENT_MAX_ROUNDS:
+                    raise UpstreamRequestError(
+                        f"preview 超过最大重试轮次 {PREVIEW_PAYMENT_MAX_ROUNDS}",
+                        details={"rounds": preview_round - 1, "max_rounds": PREVIEW_PAYMENT_MAX_ROUNDS},
+                    )
                 self._push_runtime_message(
                     account_id,
                     f"正在进行 preview 验证，第 {preview_round} 轮",
@@ -2229,6 +2333,13 @@ class PaymentService:
             while True:
                 self._ensure_not_paused(account_id)
                 cycle += 1
+                if cycle > CREATE_QR_MAX_CYCLES:
+                    raise UpstreamRequestError(
+                        f"二维码生成连续失败超过最大轮次 {CREATE_QR_MAX_CYCLES}",
+                        details={"cycles": cycle - 1, "max_cycles": CREATE_QR_MAX_CYCLES},
+                    )
+                # 每次签单轮次前刷新套餐与订阅状态，确保 purchase_mode 与当前账号状态一致
+                self.load_products(account_id, invitation_code=invitation, flow=flow)
                 session = self.state_service.load_session(account_id)
                 if not session.preview or not session.preview.biz_id:
                     self._push_runtime_message(
@@ -2251,6 +2362,9 @@ class PaymentService:
                             invitation_code=invitation,
                         ),
                         concurrency=current_account.preview_concurrency,
+                        preview_concurrency_time=current_account.preview_concurrency_time
+                        if current_account.preview_concurrency_time_enabled
+                        else "",
                         flow=flow,
                     )
                     session = self.state_service.load_session(account_id)
@@ -2520,8 +2634,10 @@ class PaymentService:
                 message="完整支付链路执行成功",
                 details={"biz_id": task.biz_id, "task_id": task.id, "amount": task.amount},
             )
+            self.start_payment_status_poll(account_id, task.biz_id)
             return task
         except RunPausedError as exc:
+            self.stop_payment_status_poll(account_id)
             self.runtime_logs.finish_run(
                 flow,
                 status="paused",
@@ -2530,6 +2646,7 @@ class PaymentService:
             )
             raise
         except Exception as exc:
+            self.stop_payment_status_poll(account_id)
             self.runtime_logs.finish_run(
                 flow,
                 status="failed",
@@ -2614,9 +2731,7 @@ class PaymentService:
                 invitation,
                 flow=flow,
             )
-        except UpstreamRequestError as exc:
-            if "已耗尽" not in exc.message:
-                raise
+        except TicketPoolExhaustedError:
             self.runtime_logs.log_event(
                 flow,
                 stage="ticket_pool",
@@ -2639,6 +2754,8 @@ class PaymentService:
                 else "",
                 flow=flow,
             )
+        except UpstreamRequestError:
+            raise
 
         # Persist preview to session so create_qr can read it
         session = self.state_service.load_session(account_id)
@@ -2761,6 +2878,77 @@ class PaymentService:
 
         return PaymentCheckResult(biz_id=biz_id, status=status, raw=result.raw)
 
+    def start_payment_status_poll(self, account_id: str, biz_id: str) -> None:
+        """Start a background thread that polls /pay/check until payment is final."""
+        with self._payment_poll_lock:
+            self.stop_payment_status_poll(account_id)
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=self._poll_payment_status_loop,
+                args=(account_id, biz_id, stop_event),
+                name=f"aegisflow-payment-poll-{account_id}",
+                daemon=True,
+            )
+            self._payment_poll_stops[account_id] = stop_event
+            self._payment_poll_threads[account_id] = thread
+            thread.start()
+
+    def stop_payment_status_poll(self, account_id: str) -> None:
+        """Stop the background payment polling thread for an account."""
+        with self._payment_poll_lock:
+            stop_event = self._payment_poll_stops.pop(account_id, None)
+            if stop_event:
+                stop_event.set()
+            self._payment_poll_threads.pop(account_id, None)
+
+    def _poll_payment_status_loop(
+        self,
+        account_id: str,
+        biz_id: str,
+        stop_event: threading.Event,
+    ) -> None:
+        poll_interval_seconds = 2
+        max_poll_seconds = 300
+        deadline = time.monotonic() + max_poll_seconds
+        while not stop_event.is_set() and time.monotonic() < deadline:
+            try:
+                result = self.check_payment(account_id, biz_id)
+                status = (result.status or "").strip().upper()
+                if status == "SUCCESS" or status == "EXPIRE" or status == "EXPIRED":
+                    self.runtime_logs.log_account_event(
+                        account_id=account_id,
+                        action="payment_poll",
+                        stage="payment_status",
+                        status="final",
+                        message=f"支付状态已终态：{status}",
+                        details={"biz_id": biz_id, "status": status},
+                    )
+                    break
+            except RunPausedError:
+                self.runtime_logs.log_account_event(
+                    account_id=account_id,
+                    action="payment_poll",
+                    stage="payment_status",
+                    status="paused",
+                    message="支付状态轮询因任务暂停而停止",
+                    details={"biz_id": biz_id},
+                )
+                break
+            except Exception as exc:
+                self.runtime_logs.log_account_event(
+                    account_id=account_id,
+                    action="payment_poll",
+                    stage="payment_status",
+                    status="error",
+                    message=f"支付状态轮询异常：{exc}",
+                    details={"biz_id": biz_id, "error": exc.__class__.__name__},
+                    level=logging.WARNING,
+                )
+            stop_event.wait(poll_interval_seconds)
+        with self._payment_poll_lock:
+            self._payment_poll_stops.pop(account_id, None)
+            self._payment_poll_threads.pop(account_id, None)
+
     def list_tasks(self, account_id: str) -> list[PaymentTaskRecord]:
         return self.state_service.list_tasks(account_id)
 
@@ -2874,15 +3062,21 @@ class PaymentService:
         except (TypeError, ValueError):
             return 0.0
 
+
+
     def _hydrate_tdc_if_needed(
         self,
         account: AccountRecord,
         session: AccountSessionState,
         request: CaptchaVerifyPayloadRequest,
+        *,
+        refreshcnt: int = 0,
     ) -> tuple[CaptchaVerifyPayloadRequest, dict[str, Any] | None]:
         if (request.collect or "").strip() and (request.eks or "").strip():
             return request, None
-        result = self.tdc_service.collect_for_challenge(account, session.captcha_challenge_raw or {})
+        result = self.tdc_service.collect_for_challenge(
+            account, session.captcha_challenge_raw or {}, refreshcnt=refreshcnt
+        )
         hydrated = request.model_copy(
             update={
                 "collect": (request.collect or "").strip() or result.collect_raw,

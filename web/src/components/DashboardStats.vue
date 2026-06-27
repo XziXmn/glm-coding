@@ -4,6 +4,7 @@ import { zhCN as copy } from "../locales/zhCN";
 defineProps<{
   accountsTotal: number;
   runningTotal: number;
+  pauseRequestedTotal: number;
   qrTotal: number;
 }>();
 </script>
@@ -19,6 +20,11 @@ defineProps<{
       <span class="stat-label">{{ copy.stats.running }}</span>
       <strong>{{ runningTotal }}</strong>
       <small>{{ copy.stats.runningHint }}</small>
+    </n-card>
+    <n-card class="stat-card" :bordered="false">
+      <span class="stat-label">{{ copy.stats.pauseRequested }}</span>
+      <strong>{{ pauseRequestedTotal }}</strong>
+      <small>{{ copy.stats.pauseRequestedHint }}</small>
     </n-card>
     <n-card class="stat-card warm" :bordered="false">
       <span class="stat-label">{{ copy.stats.qrReady }}</span>

@@ -17,6 +17,7 @@ from typing import Any
 
 from app.config import Settings, get_settings
 from app.errors import BadRequestError
+from app.services import ddddocr_adapter
 
 OCR_DEPENDENCIES = ("cv2", "numpy", "rapidocr", "onnxruntime")
 PROXY_ENV_KEYS = (
@@ -280,9 +281,37 @@ class OcrService:
                 details={"missing_dependencies": missing},
             )
 
+        primary_error: Exception | None = None
         try:
             result = self._run_worker(image_bytes, prompt_text)
-        except FuturesTimeoutError as exc:
+            normalized = self._normalize_result(result)
+            if self._is_confidence_acceptable(normalized):
+                return normalized
+            primary_error = BadRequestError(
+                "主 OCR 置信度不足，尝试 ddddocr fallback",
+                details={"confidence": normalized.get("confidence")},
+            )
+        except Exception as exc:
+            primary_error = exc
+
+        if ddddocr_adapter.is_available() and self.settings.tencent_ocr_ddddocr_fallback:
+            try:
+                fallback = ddddocr_adapter.analyze_image_bytes(
+                    image_bytes,
+                    prompt_text=prompt_text,
+                    include_debug=self.settings.tencent_ocr_include_debug,
+                )
+                return self._normalize_result(fallback)
+            except Exception as fallback_exc:
+                raise BadRequestError(
+                    "验证码 OCR 识别失败（主算法与 fallback 均失败）",
+                    details={
+                        "primary_reason": str(primary_error),
+                        "fallback_reason": str(fallback_exc),
+                    },
+                ) from fallback_exc
+
+        if isinstance(primary_error, FuturesTimeoutError):
             raise BadRequestError(
                 "验证码 OCR 识别超时",
                 details={
@@ -290,11 +319,24 @@ class OcrService:
                     "workers": max(1, self.settings.tencent_ocr_workers),
                     "inflight_workers": self._inflight_snapshot(),
                 },
-            ) from exc
-        except Exception as exc:
-            raise BadRequestError("验证码 OCR 识别失败", details={"reason": str(exc)}) from exc
+            ) from primary_error
 
-        return self._normalize_result(result)
+        if isinstance(primary_error, Exception):
+            raise BadRequestError("验证码 OCR 识别失败", details={"reason": str(primary_error)}) from primary_error
+
+        raise BadRequestError("验证码 OCR 识别失败")
+
+    def _is_confidence_acceptable(self, result: dict[str, Any]) -> bool:
+        confidence = float(result.get("confidence") or 0)
+        candidate_count = int(result.get("candidate_count") or 0)
+        points = result.get("points")
+        if not isinstance(points, list) or not points:
+            return False
+        # Accept if confidence is above the configured minimum or if we have
+        # enough candidates and a non-zero score.
+        if confidence >= self.settings.tencent_captcha_min_confidence:
+            return True
+        return candidate_count >= len(points) and confidence > 0.05
 
     def _run_worker(self, image_bytes: bytes, prompt_text: str) -> dict[str, Any]:
         timeout = max(self.settings.tencent_ocr_timeout_seconds, 1)

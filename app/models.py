@@ -84,10 +84,10 @@ class AccountRecord(BaseModel):
     proxy_url: str = ""
     user_agent: str = ""
     browser_impersonate: str = ""
-    preview_concurrency: int = 1
-    preview_concurrency_time_enabled: bool = False
+    preview_concurrency: int = 2
+    preview_concurrency_time_enabled: bool = True
     preview_concurrency_time: str = ""
-    ticket_pool_size: int = 0  # 0 = disabled; N > 0 = pool mode: collect N tickets first
+    ticket_pool_size: int = 20  # 0 = disabled; N > 0 = pool mode: collect N tickets first
     ticket_pool_drain_interval_ms: int = 0  # 0 = parallel drain; N > 0 = serial drain interval
     stock_monitor_enabled: bool = False
     stock_monitor_last_checked_at: str | None = None
@@ -125,10 +125,10 @@ class PublicAccountRecord(BaseModel):
     proxy_url: str = ""
     user_agent: str = ""
     browser_impersonate: str = ""
-    preview_concurrency: int = 1
-    preview_concurrency_time_enabled: bool = False
+    preview_concurrency: int = 2
+    preview_concurrency_time_enabled: bool = True
     preview_concurrency_time: str = ""
-    ticket_pool_size: int = 0
+    ticket_pool_size: int = 20
     ticket_pool_drain_interval_ms: int = 0
     invitation_code: str = DEFAULT_INVITATION_CODE
     stock_monitor_enabled: bool = False

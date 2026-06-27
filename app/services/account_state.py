@@ -26,11 +26,17 @@ from app.models import (
     PublicAccountRecord,
 )
 from app.runtime_logging import get_runtime_log_service
+from app.services.global_settings_service import (
+    DEFAULT_PREVIEW_CONCURRENCY,
+    DEFAULT_PREVIEW_CONCURRENCY_TIME,
+    DEFAULT_SCHEDULED_START_TIME,
+    DEFAULT_TICKET_POOL_DRAIN_INTERVAL_MS,
+    DEFAULT_TICKET_POOL_SIZE,
+    get_global_settings_service,
+)
 from app.storage.json_store import JsonFileStore
 
 TOKEN_COOKIE_KEY = "bigmodel_token_production"
-DEFAULT_SCHEDULED_START_TIME = "09:59:58"
-DEFAULT_PREVIEW_CONCURRENCY = 1
 MAX_PREVIEW_CONCURRENCY = 4
 
 try:
@@ -107,6 +113,8 @@ class AccountStateService:
                 browser_impersonate = resolve_browser_impersonate(existing_impersonate)
             else:
                 browser_impersonate = random_browser_impersonate()
+
+            global_defaults = get_global_settings_service().get()
             record = AccountRecord(
                 id=account_id,
                 label=request.label,
@@ -119,10 +127,10 @@ class AccountStateService:
                 proxy_url=request.proxy_url.strip(),
                 user_agent=request.user_agent.strip(),
                 browser_impersonate=browser_impersonate,
-                preview_concurrency=_clamp_preview_concurrency(existing.get("preview_concurrency") if existing else 1),
-                preview_concurrency_time_enabled=bool(existing.get("preview_concurrency_time_enabled")) if existing else False,
-                preview_concurrency_time=str(existing.get("preview_concurrency_time") or "") if existing else "",
-                ticket_pool_size=max(0, int(existing.get("ticket_pool_size") or 0)) if existing else 0,
+                preview_concurrency=_clamp_preview_concurrency(existing.get("preview_concurrency") if existing else global_defaults.preview_concurrency),
+                preview_concurrency_time_enabled=bool(existing.get("preview_concurrency_time_enabled")) if existing else True,
+                preview_concurrency_time=str(existing.get("preview_concurrency_time") or "") if existing else global_defaults.preview_concurrency_time,
+                ticket_pool_size=max(0, int(existing.get("ticket_pool_size") or 0)) if existing else global_defaults.ticket_pool_size,
                 ticket_pool_drain_interval_ms=max(
                     0,
                     min(
@@ -131,12 +139,12 @@ class AccountStateService:
                     ),
                 )
                 if existing
-                else 0,
-                stock_monitor_enabled=bool(existing.get("stock_monitor_enabled")) if existing else False,
+                else global_defaults.ticket_pool_drain_interval_ms,
+                stock_monitor_enabled=bool(existing.get("stock_monitor_enabled")) if existing else global_defaults.stock_monitor_enabled,
                 stock_monitor_last_checked_at=existing.get("stock_monitor_last_checked_at") if existing else None,
                 stock_monitor_last_message=str(existing.get("stock_monitor_last_message") or "") if existing else "",
                 schedule_enabled=bool(existing.get("schedule_enabled")) if existing else False,
-                scheduled_start_time=str(existing.get("scheduled_start_time") or DEFAULT_SCHEDULED_START_TIME) if existing else DEFAULT_SCHEDULED_START_TIME,
+                scheduled_start_time=str(existing.get("scheduled_start_time") or "") if existing else global_defaults.scheduled_start_time,
                 last_scheduled_run_at=existing.get("last_scheduled_run_at") if existing else None,
                 last_scheduled_run_key=str(existing.get("last_scheduled_run_key") or "") if existing else "",
                 last_manual_run_at=existing.get("last_manual_run_at") if existing else None,

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const vm = require('vm');
+const crypto = require('crypto');
 
 function readInput() {
   const inputPath = process.argv[2];
@@ -85,6 +86,7 @@ function buildWindow(input) {
   const sessionStorage = makeStorage();
   const entryUrl = input.entryUrl || 'https://www.bigmodel.cn/glm-coding';
   const url = new URL(entryUrl);
+  const perfStart = Date.now();
 
   const document = makeNoopProxy({
     cookie: input.cookieHeader || '',
@@ -303,20 +305,41 @@ function buildWindow(input) {
       onLine: true,
       maxTouchPoints: 0,
       webdriver: false,
+      plugins: [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', version: 'undefined', length: 1, item: () => null, namedItem: () => null },
+        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', version: 'undefined', length: 1, item: () => null, namedItem: () => null },
+      ],
+      mimeTypes: [
+        { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null },
+        { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null },
+      ],
       vibrate() {
         return false;
       },
       geolocation: makeNoopProxy({}),
       mediaDevices: makeNoopProxy({}),
+      clipboard: makeNoopProxy({}),
+      keyboard: makeNoopProxy({}),
+      mediaCapabilities: makeNoopProxy({}),
+      permissions: makeNoopProxy({}),
+      presentation: makeNoopProxy({}),
+      scheduling: makeNoopProxy({}),
+      wakeLock: makeNoopProxy({}),
+      webkitTemporaryStorage: makeNoopProxy({}),
     },
     document,
     localStorage,
     sessionStorage,
     performance: {
       timing: {},
-      now: () => 1234.56,
+      now: () => Date.now() - perfStart,
       getEntriesByType: () => [],
+      mark: () => {},
+      measure: () => {},
+      clearMarks: () => {},
+      clearMeasures: () => {},
     },
+
     history: {
       pushState() {},
       replaceState() {},
@@ -328,8 +351,23 @@ function buildWindow(input) {
     },
     crypto: {
       getRandomValues(array) {
+        if (!array || typeof array.length !== 'number') {
+          return array;
+        }
+        if (array instanceof Uint8Array || array instanceof Uint8ClampedArray || array instanceof Int8Array) {
+          crypto.randomFillSync(array);
+          return array;
+        }
+        const bytes = crypto.randomBytes(array.length * (array.BYTES_PER_ELEMENT || 1));
         for (let i = 0; i < array.length; i += 1) {
-          array[i] = (i * 17 + 29) % 256;
+          const byteLen = array.BYTES_PER_ELEMENT || 1;
+          if (byteLen === 1) {
+            array[i] = bytes[i];
+          } else if (byteLen === 2) {
+            array[i] = bytes.readUInt16LE(i * 2);
+          } else if (byteLen === 4) {
+            array[i] = bytes.readUInt32LE(i * 4);
+          }
         }
         return array;
       },
@@ -352,6 +390,9 @@ function buildWindow(input) {
     WebSocket: function WebSocket() {},
     FileReader: function FileReader() {},
     TextEncoder,
+    WebGLRenderingContext: function WebGLRenderingContext() {},
+    WebGL2RenderingContext: function WebGL2RenderingContext() {},
+    Notification: function Notification() {},
   };
 
   windowObj.window = windowObj;
@@ -383,8 +424,9 @@ function main() {
     throw new Error('tdc_not_ready');
   }
 
+  const refreshcnt = typeof input.refreshcnt === 'number' ? input.refreshcnt : 0;
   if (typeof tdc.setData === 'function') {
-    tdc.setData('refreshcnt', 0);
+    tdc.setData('refreshcnt', refreshcnt);
     if (input.setData && typeof input.setData === 'object') {
       tdc.setData(input.setData);
     }

@@ -58,10 +58,38 @@ export interface HealthPayload {
 export interface RuntimeLogsPayload {
   date: string;
   path: string;
-  lines: string[];
-  text: string;
+  stream: string;
+  account_id: string | null;
+  entries: RuntimeLogEntry[];
   truncated?: boolean;
   total?: number;
+}
+
+export interface RuntimeLogEntry {
+  timestamp: string;
+  status: string;
+  account_id: string;
+  action: string;
+  stage: string;
+  message: string;
+  details: Record<string, unknown>;
+  details_text: string;
+  raw: string;
+}
+
+export interface LogStreamOption {
+  value: string;
+  label: string;
+}
+
+export interface GlobalSettings {
+  scheduled_start_time: string;
+  preview_concurrency: number;
+  preview_concurrency_time: string;
+  ticket_pool_size: number;
+  ticket_pool_drain_interval_ms: number;
+  stock_monitor_enabled: boolean;
+  auto_probe_on_import: boolean;
 }
 
 export interface ProductOffer {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -30,8 +31,9 @@ class SchedulerService:
         self._thread: threading.Thread | None = None
         self._running_accounts: set[str] = set()
         self._flow_accounts: set[str] = set()
+        self._bootstrap_accounts: set[str] = set()
         self._pause_requested: set[str] = set()
-        self._pending_scheduled_runs: dict[str, str] = {}
+        self._pending_scheduled_runs: dict[str, tuple[str, float]] = {}
         self._stock_monitor_threads: dict[str, threading.Thread] = {}
         self._stock_monitor_stops: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
@@ -41,10 +43,12 @@ class SchedulerService:
             return
         self._clear_stale_schedule_statuses()
         self._stop_event.clear()
+        # 先同步完成所有账号的启动健康检查与上下文同步，避免定时轮询在
+        # 账号尚未就绪时就开始调度导致漏抢。
+        self.check_cached_accounts_once()
         self._thread = threading.Thread(target=self._run_loop, name="aegisflow-scheduler", daemon=True)
         self._thread.start()
         self._start_enabled_stock_monitors()
-        threading.Thread(target=self.check_cached_accounts_once, name="aegisflow-account-check", daemon=True).start()
         self.runtime_logs.log_system_event(
             stage="scheduler",
             status="started",
@@ -111,6 +115,8 @@ class SchedulerService:
             if public_account.scheduled_start_time > current_hms:
                 continue
             account = self.state_service.get_account(public_account.id)
+            if str(account.account_status or "").lower() in ("expired", "error"):
+                continue
             run_key = self._scheduled_run_key(current_date, account.scheduled_start_time)
             if self._already_ran_schedule(account, run_key):
                 continue
@@ -122,9 +128,9 @@ class SchedulerService:
         for public_account in self.state_service.list_accounts():
             account_id = public_account.id
             with self._lock:
-                if account_id in self._running_accounts:
+                if account_id in self._bootstrap_accounts:
                     continue
-                self._running_accounts.add(account_id)
+                self._bootstrap_accounts.add(account_id)
             try:
                 self.payment_service.bootstrap_account(account_id)
                 self.state_service.set_account_status(
@@ -172,7 +178,7 @@ class SchedulerService:
                 )
             finally:
                 with self._lock:
-                    self._running_accounts.discard(account_id)
+                    self._bootstrap_accounts.discard(account_id)
 
     def start_account_flow(
         self,
@@ -476,9 +482,10 @@ class SchedulerService:
         with self._lock:
             if account_id not in self._running_accounts:
                 return False
-            if self._pending_scheduled_runs.get(account_id) == run_key:
+            pending = self._pending_scheduled_runs.get(account_id)
+            if pending and pending[0] == run_key:
                 return True
-            self._pending_scheduled_runs[account_id] = run_key
+            self._pending_scheduled_runs[account_id] = (run_key, time.time())
         self.runtime_logs.log_account_event(
             account_id=account_id,
             action="run_payment_flow",
@@ -489,12 +496,35 @@ class SchedulerService:
         )
         return True
 
-    def _pop_pending_scheduled_run(self, account_id: str) -> str:
+    def _pop_pending_scheduled_run(self, account_id: str) -> tuple[str, float]:
         with self._lock:
-            return self._pending_scheduled_runs.pop(account_id, "")
+            return self._pending_scheduled_runs.pop(account_id, ("", 0.0))
 
-    def _start_pending_scheduled_run(self, account_id: str, run_key: str) -> None:
+    def _start_pending_scheduled_run(
+        self, account_id: str, pending: tuple[str, float], *, source: str
+    ) -> None:
+        run_key, queued_at = pending
         if not run_key:
+            return
+        if source != "scheduled":
+            self.runtime_logs.log_account_event(
+                account_id=account_id,
+                action="run_payment_flow",
+                stage="scheduler",
+                status="dropped",
+                message="非定时任务结束后，丢弃挂起的定时补跑",
+                details={"scheduled_run_key": run_key, "source": source},
+            )
+            return
+        if time.time() - queued_at > 60:
+            self.runtime_logs.log_account_event(
+                account_id=account_id,
+                action="run_payment_flow",
+                stage="scheduler",
+                status="expired",
+                message="挂起的定时补跑已超时（超过 60 秒），不再执行",
+                details={"scheduled_run_key": run_key, "queued_at": queued_at},
+            )
             return
         account = self.state_service.get_account(account_id)
         if not account.schedule_enabled:
@@ -556,7 +586,11 @@ class SchedulerService:
                 self._running_accounts.discard(account_id)
                 self._flow_accounts.discard(account_id)
                 self._pause_requested.discard(account_id)
-            self._start_pending_scheduled_run(account_id, self._pop_pending_scheduled_run(account_id))
+            self._start_pending_scheduled_run(
+                account_id,
+                self._pop_pending_scheduled_run(account_id),
+                source=source,
+            )
 
 
 _scheduler_service: SchedulerService | None = None

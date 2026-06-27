@@ -26,6 +26,7 @@ function updateTime(event: Event) {
 
 <template>
   <div class="schedule-cell">
+    <span class="schedule-label">{{ copy.schedule.enableLabel }}</span>
     <n-switch :value="enabled" :aria-label="copy.schedule.enableLabel" @update:value="updateEnabled" />
     <input
       v-if="!enabled"

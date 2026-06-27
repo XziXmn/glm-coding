@@ -107,6 +107,8 @@ class TencentTdcService:
         self,
         account: AccountRecord,
         raw_challenge: dict[str, Any],
+        *,
+        refreshcnt: int = 0,
     ) -> TdcCollectResult:
         tdc_path = self.extract_tdc_path(raw_challenge)
         if not tdc_path:
@@ -125,6 +127,7 @@ class TencentTdcService:
             ft_code=ft_code,
             account=account,
             user_agent=user_agent,
+            refreshcnt=refreshcnt,
         )
 
         return TdcCollectResult(
@@ -203,6 +206,7 @@ class TencentTdcService:
         ft_code: str,
         account: AccountRecord,
         user_agent: str,
+        refreshcnt: int = 0,
     ) -> dict[str, Any]:
         if not self.runner_path.exists():
             raise BadRequestError("TDC VM runner 不存在，项目文件可能没打全")
@@ -224,7 +228,7 @@ class TencentTdcService:
                         "entryUrl": self.settings.tencent_captcha_entry_url,
                         "userAgent": user_agent,
                         "cookieHeader": account.cookie_header,
-                        "setData": {"refreshcnt": 0},
+                        "refreshcnt": refreshcnt,
                     },
                     ensure_ascii=False,
                 ),

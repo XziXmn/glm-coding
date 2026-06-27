@@ -77,6 +77,18 @@ class UpstreamRequestError(AegisFlowError):
         )
 
 
+class TicketPoolExhaustedError(AegisFlowError):
+    """Raised when all pooled captcha tickets are consumed without a bizId."""
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            status_code=502,
+            code="ticket_pool_exhausted",
+            details=details,
+        )
+
+
 def install_exception_handlers(app: FastAPI) -> None:
     """Register shared exception handlers."""
 
