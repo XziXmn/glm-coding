@@ -75,6 +75,7 @@ export const zhCN = {
     startTimeLabel: "启动时间",
     notConfigured: "未配置",
     syncFingerprint: "同步账号信息",
+    enableAllSchedules: "全部开始抢购",
     delete: "删除",
     deleteConfirm: "确定删除这个账号及其本地缓存吗？",
     modes: {
@@ -111,7 +112,7 @@ export const zhCN = {
     unchecked: "未检查",
   },
   schedule: {
-    enableLabel: "启动定时",
+    enableLabel: "开始抢购",
     timeLabel: "定时启动时间",
   },
   qr: {

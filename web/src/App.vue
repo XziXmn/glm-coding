@@ -88,6 +88,22 @@ async function updateSchedule(
     });
 }
 
+async function enableAllSchedules() {
+    const defaults = dashboard.settings.value;
+    const defaultTime = defaults?.scheduled_start_time || "09:59:58";
+    await Promise.all(
+        dashboard.details.value
+            .filter((detail) => !detail.account.schedule_enabled)
+            .map((detail) =>
+                dashboard.updatePreferences(detail.account.id, {
+                    schedule_enabled: true,
+                    scheduled_start_time:
+                        detail.account.scheduled_start_time || defaultTime,
+                }),
+            ),
+    );
+}
+
 function openLogs() {
     showLogs.value = true;
 }
@@ -129,6 +145,7 @@ function openLogs() {
                     @open-context="openContext"
                     @select-product="updateProduct"
                     @update-schedule="updateSchedule"
+                    @enable-all-schedules="enableAllSchedules"
                     @delete="dashboard.deleteAccount"
                     @start-stock-monitor="dashboard.startStockMonitor"
                     @stop-stock-monitor="dashboard.stopStockMonitor"

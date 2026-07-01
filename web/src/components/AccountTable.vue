@@ -18,10 +18,15 @@ const emit = defineEmits<{
     openContext: [detail: AccountDetailResponse];
     selectProduct: [accountId: string, productId: string];
     updateSchedule: [accountId: string, enabled: boolean, time: string];
+    enableAllSchedules: [];
     delete: [accountId: string];
     startStockMonitor: [accountId: string];
     stopStockMonitor: [accountId: string];
 }>();
+
+function anyScheduleDisabled(details: AccountDetailResponse[]) {
+    return details.some((detail) => !detail.account.schedule_enabled);
+}
 
 function latestTask(detail: AccountDetailResponse): PaymentTaskRecord | null {
     return detail.tasks?.[0] || null;
@@ -98,6 +103,13 @@ function actionLoading(key: string, accountId: string, actionKey: string) {
                     <span>{{ copy.table.title }}</span>
                     <small>{{ copy.table.subtitle(details.length) }}</small>
                 </div>
+                <n-button
+                    type="primary"
+                    :disabled="!anyScheduleDisabled(details)"
+                    @click="emit('enableAllSchedules')"
+                >
+                    {{ copy.table.enableAllSchedules }}
+                </n-button>
             </div>
         </template>
 
