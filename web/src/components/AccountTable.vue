@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import QrPreview from "./QrPreview.vue";
 import ScheduleEditor from "./ScheduleEditor.vue";
+import TicketPoolEditor from "./TicketPoolEditor.vue";
 import { zhCN as copy } from "../locales/zhCN";
 import type {
     AccountDetailResponse,
@@ -18,6 +19,10 @@ const emit = defineEmits<{
     openContext: [detail: AccountDetailResponse];
     selectProduct: [accountId: string, productId: string];
     updateSchedule: [accountId: string, enabled: boolean, time: string];
+    updatePreviewConcurrency: [accountId: string, value: number];
+    updateTicketStartTime: [accountId: string, time: string];
+    updateTicketPool: [accountId: string, size: number, drainIntervalMs: number];
+    clearTicketPool: [accountId: string];
     delete: [accountId: string];
     startStockMonitor: [accountId: string];
     stopStockMonitor: [accountId: string];
@@ -50,11 +55,8 @@ function isStockMonitoring(detail: AccountDetailResponse) {
     return Boolean(detail.account.stock_monitor_enabled);
 }
 
-function scheduleStateText(detail: AccountDetailResponse) {
-    if (!detail.account.schedule_enabled) {
-        return copy.table.scheduleDisabled;
-    }
-    return `${copy.table.scheduleEnabled} ${detail.account.scheduled_start_time || "00:00:00"}`;
+function startTimeStateText(detail: AccountDetailResponse) {
+    return detail.account.preview_concurrency_time || copy.table.notConfigured;
 }
 
 function unitLabel(unit: string | undefined) {
@@ -86,6 +88,21 @@ function selectedProduct(detail: AccountDetailResponse) {
     return detail.session.selected_product_id || null;
 }
 
+function previewConcurrencyValue(detail: AccountDetailResponse) {
+    return Math.max(
+        1,
+        Math.min(4, Number(detail.account.preview_concurrency || 1)),
+    );
+}
+
+function updatePreviewConcurrency(
+    accountId: string,
+    raw: string | number | null,
+) {
+    const value = Math.max(1, Math.min(4, Number(raw || 1)));
+    emit("updatePreviewConcurrency", accountId, value);
+}
+
 function displayMode(detail: AccountDetailResponse) {
     return detail.session.purchase_mode === "upgrade"
         ? copy.table.modes.upgrade
@@ -94,6 +111,38 @@ function displayMode(detail: AccountDetailResponse) {
 
 function actionLoading(key: string, accountId: string, actionKey: string) {
     return actionKey === `${key}:${accountId}`;
+}
+
+function ticketPoolSize(detail: AccountDetailResponse) {
+    return Math.max(0, Number(detail.account.ticket_pool_size || 0));
+}
+
+function ticketPoolDrainIntervalMs(detail: AccountDetailResponse) {
+    return Math.max(
+        0,
+        Math.min(
+            10000,
+            Number(detail.account.ticket_pool_drain_interval_ms || 0),
+        ),
+    );
+}
+
+function ticketPoolCollected(detail: AccountDetailResponse) {
+    const pool = detail.session.ticket_pool || [];
+    return pool.filter((e) => !e.used).length;
+}
+
+function ticketPoolTarget(detail: AccountDetailResponse) {
+    return ticketPoolSize(detail);
+}
+
+function onTicketPoolUpdate(
+    accountId: string,
+    enabled: boolean,
+    size: number,
+    drainIntervalMs: number,
+) {
+    emit("updateTicketPool", accountId, enabled ? size : 0, drainIntervalMs);
 }
 </script>
 
@@ -121,6 +170,9 @@ function actionLoading(key: string, accountId: string, actionKey: string) {
                     }}</span>
                     <span role="columnheader">{{
                         copy.table.columns.product
+                    }}</span>
+                    <span role="columnheader">{{
+                        copy.table.columns.schedule
                     }}</span>
                     <span role="columnheader">{{
                         copy.table.columns.status
@@ -177,6 +229,68 @@ function actionLoading(key: string, accountId: string, actionKey: string) {
                         />
                     </section>
 
+                    <section class="ops-cell config-cell" role="cell">
+                        <div class="execution-config">
+                            <div class="execution-row">
+                                <span class="config-label">{{
+                                    copy.table.executionGroups.preview
+                                }}</span>
+                                <label class="preview-race-control">
+                                    <span>{{
+                                        copy.table.previewConcurrencyShort
+                                    }}</span>
+                                    <select
+                                        :value="
+                                            previewConcurrencyValue(detail)
+                                        "
+                                        :aria-label="
+                                            copy.table.previewConcurrency
+                                        "
+                                        @change="
+                                            updatePreviewConcurrency(
+                                                detail.account.id,
+                                                (
+                                                    $event.target as HTMLSelectElement
+                                                ).value,
+                                            )
+                                        "
+                                    >
+                                        <option :value="1">1</option>
+                                        <option :value="2">2</option>
+                                        <option :value="3">3</option>
+                                        <option :value="4">4</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="execution-row">
+                                <span class="config-label">{{
+                                    copy.table.executionGroups.ticket
+                                }}</span>
+                                <TicketPoolEditor
+                                    :account-id="detail.account.id"
+                                    :enabled="ticketPoolSize(detail) > 0"
+                                    :size="ticketPoolSize(detail)"
+                                    :drain-interval-ms="
+                                        ticketPoolDrainIntervalMs(detail)
+                                    "
+                                    :collected="ticketPoolCollected(detail)"
+                                    :target="ticketPoolTarget(detail)"
+                                    :ticket-start-time="
+                                        detail.account.ticket_pool_start_time || ''
+                                    "
+                                    @update="onTicketPoolUpdate"
+                                    @update-ticket-start-time="
+                                        (id, time) =>
+                                            emit('updateTicketStartTime', id, time)
+                                    "
+                                    @clear-pool="
+                                        emit('clearTicketPool', $event)
+                                    "
+                                />
+                            </div>
+                        </div>
+                    </section>
+
                     <section class="ops-cell status-cell" role="cell">
                         <n-tag
                             :type="
@@ -210,8 +324,8 @@ function actionLoading(key: string, accountId: string, actionKey: string) {
                             {{ detail.account.stock_monitor_last_message }}
                         </small>
                         <small class="schedule-state-line"
-                            >{{ copy.table.scheduleState }}:
-                            {{ scheduleStateText(detail) }}</small
+                            >{{ copy.table.startTimeLabel }}:
+                            {{ startTimeStateText(detail) }}</small
                         >
                         <small
                             v-if="

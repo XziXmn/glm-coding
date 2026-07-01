@@ -222,7 +222,7 @@ class SchedulerService:
             account.last_scheduled_run_at = utc_now_iso()
             account.last_scheduled_run_key = scheduled_run_key or self._scheduled_run_key(
                 datetime.now(SCHEDULER_TZ).strftime("%Y-%m-%d") if SCHEDULER_TZ is not None else datetime.now().astimezone().strftime("%Y-%m-%d"),
-                account.scheduled_start_time,
+                account.preview_concurrency_time,
             )
         else:
             account.last_manual_run_at = utc_now_iso()
@@ -242,7 +242,7 @@ class SchedulerService:
             stage="scheduler",
             status="started",
             message="已提交账号运行任务",
-            details={"source": source, "scheduled_start_time": account.scheduled_start_time},
+            details={"source": source, "preview_concurrency_time": account.preview_concurrency_time, "ticket_pool_start_time": account.ticket_pool_start_time},
         )
         threading.Thread(
             target=self._run_account_flow,
@@ -472,8 +472,8 @@ class SchedulerService:
             )
             return True
 
-    def _scheduled_run_key(self, current_date: str, scheduled_start_time: str) -> str:
-        return f"{current_date}|{(scheduled_start_time or '').strip()}"
+    def _scheduled_run_key(self, current_date: str, start_time: str) -> str:
+        return f"{current_date}|{(start_time or '').strip()}"
 
     def _already_ran_schedule(self, account, run_key: str) -> bool:
         return bool(run_key) and (account.last_scheduled_run_key or "").strip() == run_key

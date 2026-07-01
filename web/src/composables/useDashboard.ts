@@ -433,6 +433,9 @@ export function useDashboard() {
     successText: string,
     action: () => Promise<unknown>,
   ) {
+    if (actionKey.value) {
+      return; // 已有操作进行中，忽略重复触发（防抖）
+    }
     actionKey.value = key;
     unlockQrAudio();
     try {
@@ -476,6 +479,13 @@ export function useDashboard() {
     );
   }
 
+  async function clearTicketPool(accountId: string) {
+    await runAction(
+      `clearpool:${accountId}`,
+      copy.feedback.ticketPoolCleared,
+      () => api.clearTicketPool(accountId),
+    );
+  }
   async function startStockMonitor(accountId: string) {
     await runAction(`stock:${accountId}`, copy.feedback.stockMonitorStarted, () =>
       api.startStockMonitor(accountId),
@@ -492,6 +502,18 @@ export function useDashboard() {
     await runAction("network-mode", copy.feedback.networkModeSaved, () =>
       api.updateNetworkMode(mode),
     );
+  }
+
+  const networkModeBusy = computed(() => actionKey.value === "network-mode");
+
+  async function saveProxyPoolSources(content: string) {
+    await runAction("proxy-pool-sources", copy.feedback.proxyPoolSourcesSaved, () =>
+      api.saveProxyPoolSources(content),
+    );
+    // 代理池延迟检测是异步的，稍后再刷新一次，让 web 状态反映检测结果
+    window.setTimeout(() => {
+      void refreshDashboard(true).catch(() => undefined);
+    }, 3000);
   }
 
   onBeforeUnmount(() => {
@@ -515,6 +537,7 @@ export function useDashboard() {
     health,
     importAccount,
     loading,
+    clearTicketPool,
     pauseRequestedTotal,
     qrTotal,
     refreshDashboard,
@@ -526,6 +549,8 @@ export function useDashboard() {
     stopStockMonitor,
     updateNetworkMode,
     updatePreferences,
+    networkModeBusy,
+    saveProxyPoolSources,
     updateSettings,
   };
 }

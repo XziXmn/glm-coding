@@ -8,6 +8,7 @@ import type {
   LogStreamOption,
   NetworkEgressMode,
   NetworkModePayload,
+  ProxyPoolSourcesPayload,
   RuntimeLogsPayload,
   PublicAccountRecord,
   TicketPoolEntry,
@@ -65,6 +66,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ mode }),
     }),
+  getProxyPoolSources: () =>
+    request<ProxyPoolSourcesPayload>("/api/proxy-pool/sources"),
+  saveProxyPoolSources: (content: string) =>
+    request<ProxyPoolSourcesPayload>("/api/proxy-pool/sources", {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
   listAccounts: () => request<PublicAccountRecord[]>("/api/accounts"),
   getAccount: (accountId: string) =>
     request<AccountDetailResponse>(
@@ -91,6 +99,11 @@ export const api = {
     request<unknown>(`/api/accounts/${encodeURIComponent(accountId)}/probe`, {
       method: "POST",
     }),
+  bootstrapAccount: (accountId: string, refreshFingerprint = true) =>
+    request<AccountDetailResponse>(
+      `/api/accounts/${encodeURIComponent(accountId)}/bootstrap?refresh_fingerprint=${String(refreshFingerprint)}`,
+      { method: "POST" },
+    ),
   startStockMonitor: (accountId: string) =>
     request<unknown>(
       `/api/accounts/${encodeURIComponent(accountId)}/stock-monitor/start`,

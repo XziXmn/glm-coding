@@ -338,7 +338,13 @@ class PaymentService:
         return self.state_service.get_account_detail(account_id)
 
     def import_account(self, request):
-        return self.state_service.import_account(request)
+        record = self.state_service.import_account(request)
+        # 导入后立即同步账号信息（客户信息/组织/套餐），失败不阻断导入
+        try:
+            self.bootstrap_account(record.id)
+        except Exception as exc:
+            logger.warning("导入后自动同步账号 %s 失败: %s", record.id, exc)
+        return record
 
     def update_preferences(self, account_id: str, request: AccountPreferencesRequest) -> AccountDetailResponse:
         return self.state_service.update_preferences(account_id, request)
@@ -2582,11 +2588,7 @@ class PaymentService:
                 # The pool is used ONLY for the first attempt; if all tickets are exhausted
                 # without a bizId, _run_pool_preview falls back internally to
                 # race_preview_payment — no exception escapes this branch.
-                deadline_time = (
-                    current_account.preview_concurrency_time
-                    if current_account.preview_concurrency_time_enabled
-                    else ""
-                )
+                deadline_time = current_account.preview_concurrency_time
                 self.runtime_logs.log_event(
                     flow,
                     stage="ticket_pool",
@@ -2614,9 +2616,7 @@ class PaymentService:
                     account_id,
                     PreviewPaymentRequest(product_id=selected_product_id),
                     concurrency=current_account.preview_concurrency,
-                    preview_concurrency_time=current_account.preview_concurrency_time
-                    if current_account.preview_concurrency_time_enabled
-                    else "",
+                    preview_concurrency_time=current_account.preview_concurrency_time,
                     flow=flow,
                 )
             task = self.create_qr(
@@ -2749,9 +2749,7 @@ class PaymentService:
                 account_id,
                 PreviewPaymentRequest(product_id=product_id),
                 concurrency=current_account.preview_concurrency,
-                preview_concurrency_time=current_account.preview_concurrency_time
-                if current_account.preview_concurrency_time_enabled
-                else "",
+                preview_concurrency_time=current_account.preview_concurrency_time,
                 flow=flow,
             )
         except UpstreamRequestError:

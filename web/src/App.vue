@@ -8,18 +8,21 @@ import DashboardStats from "./components/DashboardStats.vue";
 import GlobalSettingsModal from "./components/GlobalSettingsModal.vue";
 import ImportAccountModal from "./components/ImportAccountModal.vue";
 import LogViewer from "./components/LogViewer.vue";
+import ProxyPoolConfigModal from "./components/ProxyPoolConfigModal.vue";
 import StatusBanner from "./components/StatusBanner.vue";
 import { useDashboard } from "./composables/useDashboard";
 import type { AccountDetailResponse, AccountImportPayload } from "./types/api";
 
 const dashboard = useDashboard();
 const showImport = ref(false);
+const showProxyPoolConfig = ref(false);
 const showContext = ref(false);
 const showLogs = ref(false);
 const showSettings = ref(false);
 const selectedDetail = ref<AccountDetailResponse | null>(null);
 
 const importing = computed(() => dashboard.actionKey.value === "import");
+const proxyPoolConfigSaving = computed(() => dashboard.actionKey.value === "proxy-pool-sources");
 
 const accountOptions = computed(() =>
   dashboard.details.value.map((detail) => detail.account),
@@ -60,6 +63,11 @@ async function submitImport(payload: AccountImportPayload) {
     showImport.value = false;
 }
 
+async function submitProxyPoolSources(content: string) {
+    await dashboard.saveProxyPoolSources(content);
+    showProxyPoolConfig.value = false;
+}
+
 async function updateProduct(accountId: string, productId: string) {
     if (!productId) {
         return;
@@ -80,6 +88,39 @@ async function updateSchedule(
     });
 }
 
+async function updatePreviewConcurrency(accountId: string, value: number) {
+    await dashboard.updatePreferences(accountId, {
+        preview_concurrency: value,
+    });
+}
+
+async function updateStartTime(accountId: string, time: string) {
+    await dashboard.updatePreferences(accountId, {
+        preview_concurrency_time: time,
+    });
+}
+
+async function updateTicketStartTime(accountId: string, time: string) {
+    await dashboard.updatePreferences(accountId, {
+        ticket_pool_start_time: time,
+    });
+}
+
+async function updateTicketPool(
+    accountId: string,
+    size: number,
+    drainIntervalMs: number,
+) {
+    await dashboard.updatePreferences(accountId, {
+        ticket_pool_size: size,
+        ticket_pool_drain_interval_ms: drainIntervalMs,
+    });
+}
+
+async function clearTicketPool(accountId: string) {
+    await dashboard.clearTicketPool(accountId);
+}
+
 function openLogs() {
     showLogs.value = true;
 }
@@ -93,11 +134,13 @@ function openLogs() {
     >
         <AppShell
             :health="dashboard.health.value"
+            :network-mode-busy="dashboard.networkModeBusy.value"
             @logs="openLogs"
             @refresh="dashboard.refreshDashboard()"
             @import="showImport = true"
             @settings="showSettings = true"
             @update-network-mode="dashboard.updateNetworkMode"
+            @configure-proxy-pool="showProxyPoolConfig = true"
         >
             <div class="banner-slot">
                 <StatusBanner
@@ -119,6 +162,11 @@ function openLogs() {
                     @open-context="openContext"
                     @select-product="updateProduct"
                     @update-schedule="updateSchedule"
+                    @update-preview-concurrency="updatePreviewConcurrency"
+                    @update-start-time="updateStartTime"
+                    @update-ticket-start-time="updateTicketStartTime"
+                    @update-ticket-pool="updateTicketPool"
+                    @clear-ticket-pool="clearTicketPool"
                     @delete="dashboard.deleteAccount"
                     @start-stock-monitor="dashboard.startStockMonitor"
                     @stop-stock-monitor="dashboard.stopStockMonitor"
@@ -130,6 +178,11 @@ function openLogs() {
             v-model:show="showImport"
             :loading="importing"
             @submit="submitImport"
+        />
+        <ProxyPoolConfigModal
+            v-model:show="showProxyPoolConfig"
+            :loading="proxyPoolConfigSaving"
+            @submit="submitProxyPoolSources"
         />
         <AccountContextModal
             v-model:show="showContext"
