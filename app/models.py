@@ -105,6 +105,8 @@ class AccountRecord(BaseModel):
     last_manual_run_at: str | None = None
     last_schedule_status: str = ""
     last_schedule_message: str = ""
+    schedule_enabled: bool = False
+    scheduled_start_time: str = ""
     account_status: str = "unchecked"
     account_status_message: str = ""
     account_checked_at: str | None = None
@@ -145,6 +147,8 @@ class PublicAccountRecord(BaseModel):
     last_manual_run_at: str | None = None
     last_schedule_status: str = ""
     last_schedule_message: str = ""
+    schedule_enabled: bool = False
+    scheduled_start_time: str = ""
     account_status: str = "unchecked"
     account_status_message: str = ""
     account_checked_at: str | None = None
@@ -288,6 +292,8 @@ class AccountPreferencesRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     selected_product_id: str | None = None
+    schedule_enabled: bool | None = None
+    scheduled_start_time: str | None = None
     preview_concurrency: int | None = None
     preview_concurrency_time: str | None = None
     ticket_pool_start_time: str | None = None

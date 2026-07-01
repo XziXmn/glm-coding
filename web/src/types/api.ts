@@ -140,6 +140,8 @@ export interface PublicAccountRecord {
   last_manual_run_at?: string | null;
   last_schedule_status?: string;
   last_schedule_message?: string;
+  schedule_enabled?: boolean;
+  scheduled_start_time?: string;
   account_status?: string;
   account_status_message?: string;
   account_checked_at?: string | null;
@@ -206,6 +208,8 @@ export interface AccountImportPayload {
 
 export interface AccountPreferencesPayload {
   selected_product_id?: string | null;
+  schedule_enabled?: boolean | null;
+  scheduled_start_time?: string | null;
   preview_concurrency?: number | null;
   preview_concurrency_time?: string | null;
   ticket_pool_start_time?: string | null;

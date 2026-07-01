@@ -40,7 +40,7 @@ watch(
 );
 
 function submit() {
-  emit("submit", { ...local });
+  emit("submit", { scheduled_start_time: local.scheduled_start_time });
 }
 </script>
 
@@ -64,66 +64,6 @@ function submit() {
             type="time"
             step="1"
           />
-        </label>
-      </div>
-
-      <div class="settings-group">
-        <strong>{{ copy.settings.groups.preview }}</strong>
-        <label class="setting-row">
-          <span>{{ copy.settings.previewConcurrency }}</span>
-          <select v-model.number="local.preview_concurrency">
-            <option :value="1">1</option>
-            <option :value="2">2</option>
-            <option :value="3">3</option>
-            <option :value="4">4</option>
-          </select>
-        </label>
-        <label class="setting-row">
-          <span>{{ copy.settings.previewConcurrencyTime }}</span>
-          <input
-            v-model="local.preview_concurrency_time"
-            class="time-input"
-            type="time"
-            step="1"
-          />
-        </label>
-      </div>
-
-      <div class="settings-group">
-        <strong>{{ copy.settings.groups.ticket }}</strong>
-        <label class="setting-row">
-          <span>{{ copy.settings.ticketPoolSize }}</span>
-          <input
-            v-model.number="local.ticket_pool_size"
-            class="pool-size-input"
-            type="number"
-            min="0"
-            max="50"
-            step="1"
-          />
-        </label>
-        <label class="setting-row">
-          <span>{{ copy.settings.ticketPoolDrainIntervalMs }}</span>
-          <input
-            v-model.number="local.ticket_pool_drain_interval_ms"
-            class="pool-interval-input"
-            type="number"
-            min="0"
-            max="10000"
-            step="50"
-          />
-        </label>
-      </div>
-
-      <div class="settings-group">
-        <strong>{{ copy.settings.groups.account }}</strong>
-        <label class="setting-row">
-          <span>{{ copy.settings.stockMonitorEnabled }}</span>
-          <n-switch v-model:value="local.stock_monitor_enabled" />
-        </label>
-        <label class="setting-row">
-          <span>{{ copy.settings.autoProbeOnImport }}</span>
-          <n-switch v-model:value="local.auto_probe_on_import" />
         </label>
       </div>
     </div>

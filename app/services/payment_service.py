@@ -2368,9 +2368,7 @@ class PaymentService:
                             invitation_code=invitation,
                         ),
                         concurrency=current_account.preview_concurrency,
-                        preview_concurrency_time=current_account.preview_concurrency_time
-                        if current_account.preview_concurrency_time_enabled
-                        else "",
+                        preview_concurrency_time=current_account.preview_concurrency_time,
                         flow=flow,
                     )
                     session = self.state_service.load_session(account_id)

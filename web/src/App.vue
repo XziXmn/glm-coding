@@ -88,39 +88,6 @@ async function updateSchedule(
     });
 }
 
-async function updatePreviewConcurrency(accountId: string, value: number) {
-    await dashboard.updatePreferences(accountId, {
-        preview_concurrency: value,
-    });
-}
-
-async function updateStartTime(accountId: string, time: string) {
-    await dashboard.updatePreferences(accountId, {
-        preview_concurrency_time: time,
-    });
-}
-
-async function updateTicketStartTime(accountId: string, time: string) {
-    await dashboard.updatePreferences(accountId, {
-        ticket_pool_start_time: time,
-    });
-}
-
-async function updateTicketPool(
-    accountId: string,
-    size: number,
-    drainIntervalMs: number,
-) {
-    await dashboard.updatePreferences(accountId, {
-        ticket_pool_size: size,
-        ticket_pool_drain_interval_ms: drainIntervalMs,
-    });
-}
-
-async function clearTicketPool(accountId: string) {
-    await dashboard.clearTicketPool(accountId);
-}
-
 function openLogs() {
     showLogs.value = true;
 }
@@ -162,11 +129,6 @@ function openLogs() {
                     @open-context="openContext"
                     @select-product="updateProduct"
                     @update-schedule="updateSchedule"
-                    @update-preview-concurrency="updatePreviewConcurrency"
-                    @update-start-time="updateStartTime"
-                    @update-ticket-start-time="updateTicketStartTime"
-                    @update-ticket-pool="updateTicketPool"
-                    @clear-ticket-pool="clearTicketPool"
                     @delete="dashboard.deleteAccount"
                     @start-stock-monitor="dashboard.startStockMonitor"
                     @stop-stock-monitor="dashboard.stopStockMonitor"

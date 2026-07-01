@@ -146,7 +146,7 @@ class AccountStateService:
                 stock_monitor_enabled=bool(existing.get("stock_monitor_enabled")) if existing else global_defaults.stock_monitor_enabled,
                 stock_monitor_last_checked_at=existing.get("stock_monitor_last_checked_at") if existing else None,
                 stock_monitor_last_message=str(existing.get("stock_monitor_last_message") or "") if existing else "",
-                schedule_enabled=bool(existing.get("schedule_enabled")) if existing else False,
+                schedule_enabled=bool(existing.get("schedule_enabled")) if existing else True,
                 scheduled_start_time=str(existing.get("scheduled_start_time") or "") if existing else global_defaults.scheduled_start_time,
                 last_scheduled_run_at=existing.get("last_scheduled_run_at") if existing else None,
                 last_scheduled_run_key=str(existing.get("last_scheduled_run_key") or "") if existing else "",
