@@ -68,7 +68,14 @@ class NotFoundError(AegisFlowError):
 class UpstreamRequestError(AegisFlowError):
     """Raised when BigModel returns an error or invalid payload."""
 
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        upstream_code: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.upstream_code = upstream_code
         super().__init__(
             message,
             status_code=502,

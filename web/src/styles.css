@@ -388,6 +388,14 @@ textarea:focus-visible,
   font-weight: 700;
 }
 
+.upstream-success {
+  color: #16a34a !important;
+}
+
+.upstream-error {
+  color: #dc2626 !important;
+}
+
 .link-button {
   width: fit-content;
   max-width: 100%;

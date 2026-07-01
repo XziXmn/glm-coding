@@ -107,6 +107,8 @@ class AccountRecord(BaseModel):
     last_schedule_message: str = ""
     schedule_enabled: bool = False
     scheduled_start_time: str = ""
+    last_upstream_code: int | None = None
+    last_upstream_message: str = ""
     account_status: str = "unchecked"
     account_status_message: str = ""
     account_checked_at: str | None = None
@@ -149,6 +151,8 @@ class PublicAccountRecord(BaseModel):
     last_schedule_message: str = ""
     schedule_enabled: bool = False
     scheduled_start_time: str = ""
+    last_upstream_code: int | None = None
+    last_upstream_message: str = ""
     account_status: str = "unchecked"
     account_status_message: str = ""
     account_checked_at: str | None = None
@@ -208,6 +212,8 @@ class PaymentTaskRecord(BaseModel):
     sign: str = ""
     qr_base64: str = ""
     status: str = "PENDING"
+    upstream_code: int | None = None
+    upstream_message: str = ""
     raw_preview: dict[str, Any] = Field(default_factory=dict)
     raw_sign: dict[str, Any] = Field(default_factory=dict)
     last_check: dict[str, Any] = Field(default_factory=dict)

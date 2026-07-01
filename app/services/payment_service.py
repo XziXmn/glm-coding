@@ -1781,7 +1781,7 @@ class PaymentService:
                     preview_attempts.append(
                         {
                             "round": preview_round,
-                            "code": None,
+                            "code": exc.upstream_code,
                             "biz_id": None,
                             "sold_out": None,
                             "msg": exc.message,
@@ -1807,6 +1807,11 @@ class PaymentService:
                         account_id,
                         f"preview 验证码异常，第 {preview_round} 轮重试中",
                     )
+                    self._save_upstream_status(
+                        account_id,
+                        exc.upstream_code,
+                        exc.message,
+                    )
                     session = self.state_service.load_session(account_id)
                     continue
 
@@ -1823,7 +1828,7 @@ class PaymentService:
                     preview_attempts.append(
                         {
                             "round": preview_round,
-                            "code": None,
+                            "code": exc.upstream_code,
                             "biz_id": None,
                             "sold_out": None,
                             "msg": exc.message,
@@ -1849,6 +1854,11 @@ class PaymentService:
                     self._push_runtime_message(
                         account_id,
                         f"preview 请求失败，第 {preview_round} 轮重试中",
+                    )
+                    self._save_upstream_status(
+                        account_id,
+                        exc.upstream_code,
+                        exc.message,
                     )
                     session = self.state_service.load_session(account_id)
                     continue
@@ -1922,6 +1932,11 @@ class PaymentService:
                         account_id,
                         f"preview 成功，已获取 bizId：{biz_id}",
                     )
+                    self._save_upstream_status(
+                        account_id,
+                        200,
+                        "preview 成功拿到 bizId",
+                    )
                     if own_flow:
                         self.runtime_logs.finish_run(
                             flow,
@@ -1948,6 +1963,11 @@ class PaymentService:
                 self._push_runtime_message(
                     account_id,
                     f"获取 bizId 失败，第 {preview_round} 轮继续重试",
+                )
+                self._save_upstream_status(
+                    account_id,
+                    int(code) if code is not None else None,
+                    str(raw.get("msg") or data.get("msg") or "未拿到 bizId"),
                 )
                 session = self.state_service.load_session(account_id)
         except Exception as exc:
@@ -2443,6 +2463,8 @@ class PaymentService:
                             sign=sign,
                             qr_base64=self._build_qr_base64(sign),
                             status="PENDING",
+                            upstream_code=200,
+                            upstream_message="签单成功并生成二维码",
                             raw_preview=session.preview.raw if session.preview else {},
                             raw_sign={
                                 "mode": sign_mode,
@@ -2632,6 +2654,12 @@ class PaymentService:
                 message="完整支付链路执行成功",
                 details={"biz_id": task.biz_id, "task_id": task.id, "amount": task.amount},
             )
+            account = self.state_service.get_account(account_id)
+            account.last_upstream_code = 200
+            account.last_upstream_message = "抢购成功"
+            account.last_schedule_status = "success"
+            account.last_schedule_message = f"生成二维码成功：{task.biz_id}"
+            self.state_service.update_account(account)
             self.start_payment_status_poll(account_id, task.biz_id)
             return task
         except RunPausedError as exc:
@@ -2645,11 +2673,28 @@ class PaymentService:
             raise
         except Exception as exc:
             self.stop_payment_status_poll(account_id)
+            upstream_code = None
+            upstream_message = str(exc)
+            if isinstance(exc, UpstreamRequestError):
+                upstream_code = exc.upstream_code
+                upstream_message = exc.message
+            elif isinstance(exc, AegisFlowError):
+                upstream_message = exc.message
+            account = self.state_service.get_account(account_id)
+            account.last_upstream_code = upstream_code
+            account.last_upstream_message = upstream_message
+            account.last_schedule_status = "failed"
+            account.last_schedule_message = upstream_message
+            self.state_service.update_account(account)
             self.runtime_logs.finish_run(
                 flow,
                 status="failed",
-                message=f"完整支付链路失败：{exc}",
-                details={"error": exc.__class__.__name__},
+                message=f"完整支付链路失败：{upstream_message}",
+                details={
+                    "error": exc.__class__.__name__,
+                    "upstream_code": upstream_code,
+                    "upstream_message": upstream_message,
+                },
                 level=logging.ERROR,
             )
             raise
@@ -2781,6 +2826,28 @@ class PaymentService:
             account_status_message=account_status_message,
         )
         logger.info("[%s] %s", account_id, message)
+
+    def _save_upstream_status(
+        self,
+        account_id: str,
+        code: int | None,
+        message: str,
+        *,
+        schedule_status: str | None = None,
+        schedule_message: str | None = None,
+    ) -> None:
+        """Persist the latest upstream response code/message on the account."""
+        try:
+            account = self.state_service.get_account(account_id)
+            account.last_upstream_code = code
+            account.last_upstream_message = message
+            if schedule_status is not None:
+                account.last_schedule_status = schedule_status
+            if schedule_message is not None:
+                account.last_schedule_message = schedule_message
+            self.state_service.update_account(account)
+        except Exception:
+            logger.exception("保存上游返回码失败: %s", account_id)
 
     def _create_upgrade_sign(
         self,

@@ -142,6 +142,8 @@ export interface PublicAccountRecord {
   last_schedule_message?: string;
   schedule_enabled?: boolean;
   scheduled_start_time?: string;
+  last_upstream_code?: number | null;
+  last_upstream_message?: string;
   account_status?: string;
   account_status_message?: string;
   account_checked_at?: string | null;

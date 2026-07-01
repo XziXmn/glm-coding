@@ -224,6 +224,19 @@ function actionLoading(key: string, accountId: string, actionKey: string) {
                             {{ copy.table.bizId }}:
                             {{ latestTask(detail)?.biz_id }}
                         </small>
+                        <small
+                            v-if="detail.account.last_upstream_code !== undefined && detail.account.last_upstream_code !== null"
+                            class="mono-line"
+                            :class="{
+                                'upstream-success': detail.account.last_upstream_code === 200,
+                                'upstream-error': detail.account.last_upstream_code !== 200,
+                            }"
+                        >
+                            返回码 {{ detail.account.last_upstream_code }}
+                            <span v-if="detail.account.last_upstream_message">
+                                · {{ detail.account.last_upstream_message }}
+                            </span>
+                        </small>
                     </section>
 
                     <section class="ops-cell qr-column" role="cell">

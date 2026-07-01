@@ -187,6 +187,7 @@ class BigModelClient:
                 return ApiCallResult(data=payload.get("data"), raw=payload)
             raise UpstreamRequestError(
                 str(payload.get("msg") or payload.get("message") or "上游业务返回失败"),
+                upstream_code=int(code) if code is not None else None,
                 details={"path": path, "payload": payload},
             )
 
